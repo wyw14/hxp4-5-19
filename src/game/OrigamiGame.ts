@@ -13,6 +13,8 @@ export interface GameState {
   gameStatus: 'idle' | 'playing' | 'won' | 'lost';
 }
 
+const OPTION_CODES = ['甲', '乙', '丙', '丁'];
+
 export class OrigamiGame {
   private container: HTMLElement;
   private state: GameState;
@@ -24,6 +26,7 @@ export class OrigamiGame {
   private foldStateManager: FoldStateManager | null = null;
   private modelViewers: Model3DViewer[] = [];
   private shuffledOptions: string[] = [];
+  private optionCodeMap: Map<string, string> = new Map();
 
   private modelsContainer: HTMLElement | null = null;
   private submitBtn: HTMLButtonElement | null = null;
@@ -86,7 +89,22 @@ export class OrigamiGame {
 
           <div class="right-panel">
             <div class="panel-title">🧩 选择正确的3D模型</div>
+            <div class="option-helper-bar" id="option-helper-bar"></div>
             <div class="models-container" id="models-container"></div>
+            <div class="selection-info" id="selection-info">
+              <div class="info-row">
+                <span class="info-label">当前选择：</span>
+                <span class="info-value" id="selection-code">未选择</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">模型名称：</span>
+                <span class="info-value" id="selection-name">-</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">折叠状态：</span>
+                <span class="info-value" id="fold-status"><span class="status-pending">未完成</span></span>
+              </div>
+            </div>
             <div class="submit-area">
               <button class="btn btn-primary" id="submit-btn" disabled>✅ 提交答案</button>
             </div>
@@ -136,6 +154,7 @@ export class OrigamiGame {
     this.setupModelOptions(question);
     this.hideMessage();
     this.updateSubmitState();
+    this.updateSelectionInfo();
 
     if (this.nextBtn) {
       this.nextBtn.style.display = 'none';
@@ -165,18 +184,31 @@ export class OrigamiGame {
   private setupModelOptions(question: Question): void {
     this.modelViewers.forEach(viewer => viewer.destroy());
     this.modelViewers = [];
+    this.optionCodeMap.clear();
 
     const options = [question.correctModelId, ...question.distractorModelIds];
     this.shuffledOptions = this.rng.shuffle(options);
+
+    this.shuffledOptions.forEach((modelId, index) => {
+      this.optionCodeMap.set(modelId, OPTION_CODES[index]);
+    });
+
+    this.setupOptionHelperBar();
 
     if (this.modelsContainer) {
       this.modelsContainer.innerHTML = '';
     }
 
     this.shuffledOptions.forEach((modelId) => {
+      const code = this.optionCodeMap.get(modelId) || '';
       const modelCard = document.createElement('div');
       modelCard.className = 'model-card';
       modelCard.dataset.modelId = modelId;
+
+      const codeBadge = document.createElement('div');
+      codeBadge.className = 'option-code-badge';
+      codeBadge.textContent = code;
+      modelCard.appendChild(codeBadge);
 
       const modelViewerContainer = document.createElement('div');
       modelViewerContainer.className = 'model-viewer';
@@ -185,7 +217,7 @@ export class OrigamiGame {
       const modelLabel = document.createElement('div');
       modelLabel.className = 'model-label';
       const desc = modelDescriptions[modelId];
-      modelLabel.textContent = desc ? desc.name : modelId;
+      modelLabel.textContent = `【${code}】${desc ? desc.name : modelId}`;
       modelCard.appendChild(modelLabel);
 
       modelCard.addEventListener('click', () => this.selectModel(modelId));
@@ -195,6 +227,25 @@ export class OrigamiGame {
       const viewer = new Model3DViewer(modelViewerContainer);
       viewer.loadModel(modelId);
       this.modelViewers.push(viewer);
+    });
+  }
+
+  private setupOptionHelperBar(): void {
+    const helperBar = this.container.querySelector('#option-helper-bar');
+    if (!helperBar) return;
+
+    helperBar.innerHTML = '';
+    helperBar.className = 'option-helper-bar';
+
+    this.shuffledOptions.forEach((modelId) => {
+      const code = this.optionCodeMap.get(modelId) || '';
+      const desc = modelDescriptions[modelId];
+      const btn = document.createElement('button');
+      btn.className = 'option-helper-btn';
+      btn.dataset.modelId = modelId;
+      btn.innerHTML = `<span class="helper-code">${code}</span><span class="helper-name">${desc ? desc.name : modelId}</span>`;
+      btn.addEventListener('click', () => this.selectModel(modelId));
+      helperBar.appendChild(btn);
     });
   }
 
@@ -213,6 +264,7 @@ export class OrigamiGame {
       }
     }
     this.updateSubmitState();
+    this.updateSelectionInfo();
   }
 
   private handleUnfold(lineId: string): void {
@@ -226,6 +278,7 @@ export class OrigamiGame {
       this.showMessage('只能撤销最后一步折痕，请先撤销后面的折痕。', 'info');
     }
     this.updateSubmitState();
+    this.updateSelectionInfo();
   }
 
   private checkFoldComplete(): void {
@@ -233,6 +286,7 @@ export class OrigamiGame {
       this.showMessage('🎉 所有折叠完成！请选择正确的3D模型', 'info');
     }
     this.updateSubmitState();
+    this.updateSelectionInfo();
   }
 
   private selectModel(modelId: string): void {
@@ -252,7 +306,16 @@ export class OrigamiGame {
       }
     });
 
+    this.container.querySelectorAll('.option-helper-btn').forEach(btn => {
+      const htmlBtn = btn as HTMLElement;
+      htmlBtn.classList.remove('selected');
+      if (htmlBtn.dataset.modelId === modelId) {
+        htmlBtn.classList.add('selected');
+      }
+    });
+
     this.updateSubmitState();
+    this.updateSelectionInfo();
 
     if (!this.foldStateManager?.isComplete()) {
       this.showMessage('请先按顺序完成全部折叠，再提交答案。', 'info');
@@ -317,13 +380,55 @@ export class OrigamiGame {
       card.classList.remove('selected', 'correct');
     });
 
+    this.container.querySelectorAll('.option-helper-btn').forEach(btn => {
+      btn.classList.remove('selected');
+    });
+
     this.updateSubmitState();
+    this.updateSelectionInfo();
     if (this.nextBtn) {
       this.nextBtn.style.display = 'none';
     }
 
     this.hideMessage();
     this.updateStepsDisplay();
+  }
+
+  private updateSelectionInfo(): void {
+    const codeEl = this.container.querySelector('#selection-code');
+    const nameEl = this.container.querySelector('#selection-name');
+    const foldStatusEl = this.container.querySelector('#fold-status');
+
+    if (codeEl) {
+      if (this.state.selectedModelId) {
+        const code = this.optionCodeMap.get(this.state.selectedModelId) || '?';
+        codeEl.textContent = code;
+        codeEl.className = 'info-value code-selected';
+      } else {
+        codeEl.textContent = '未选择';
+        codeEl.className = 'info-value';
+      }
+    }
+
+    if (nameEl) {
+      if (this.state.selectedModelId) {
+        const desc = modelDescriptions[this.state.selectedModelId];
+        nameEl.textContent = desc ? desc.name : this.state.selectedModelId;
+      } else {
+        nameEl.textContent = '-';
+      }
+    }
+
+    if (foldStatusEl) {
+      const isComplete = Boolean(this.foldStateManager?.isComplete());
+      if (isComplete) {
+        foldStatusEl.innerHTML = '<span class="status-complete">✅ 已完成</span>';
+      } else {
+        const currentStep = this.foldStateManager?.getCurrentStep() ?? 0;
+        const totalSteps = this.state.currentQuestion?.maxSteps ?? 0;
+        foldStatusEl.innerHTML = `<span class="status-pending">⏳ 进行中 (${currentStep}/${totalSteps})</span>`;
+      }
+    }
   }
 
   private showHint(): void {
